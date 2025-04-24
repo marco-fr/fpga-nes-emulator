@@ -127,7 +127,6 @@ logic [15:0] t; // Temporary VRAM address (15 bits)
 logic [2:0]  x; // Fine X scroll
 logic        w; // Write toggle
 logic [7:0]  tile_shift_low, tile_shift_high;
-logic [1:0]  palette_latch;
 
 // Palette RAM (32 bytes)
 logic [7:0] palette_ram [0:31];
@@ -156,9 +155,6 @@ endfunction
 // CPU bus
 always_ff @(posedge clk) begin
     if(reset) begin
-        chr_rom_addr <= 13'b0;
-        vram_addr <= 11'b0;
-        vram_read <= 1'b0;
         for (int i = 0; i < 8; i++) begin
             regs[i] <= 8'd0;
         end
@@ -210,7 +206,6 @@ end
 // 
 logic [2:0] cycle_offset;
 assign cycle_offset = drawX % 8;
-logic [7:0] tile_lsb, tile_msb;
 
 logic [2:0] bit_index;
 assign bit_index = 7 - cycle_offset;

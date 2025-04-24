@@ -55,14 +55,14 @@ module nes_top(
     
     CHR_ROM chr_rom(
         .addra(chr_rom_addr),
-        .clka(clk_25MHz),
+        .clka(clk),
         .dina(chr_rom_dina),
         .douta(chr_rom_data),
         .ena(1'b1),
         .wea(1'b0),
         
         .addrb(0),
-        .clkb(clk_25MHz),
+        .clkb(clk),
         .dinb(0),
         .doutb(chr_rom_doutb),
         .enb(1'b0),
@@ -80,14 +80,14 @@ module nes_top(
     
     VRAM vram(
         .addra(vram_addr),
-        .clka(clk_25MHz),
+        .clka(clk),
         .dina(vram_dina),
         .douta(vram_data),
         .ena(1'b1),
         .wea(1'b0),
         
         .addrb(0),
-        .clkb(clk_25MHz),
+        .clkb(clk),
         .dinb(0),
         .doutb(vram_doutb),
         .enb(1'b0),
