@@ -30,6 +30,10 @@ module ppu(
     input  logic [2:0]  cpu_addr,        // $2000-$2007
     input  logic [7:0]  cpu_data_in,
     output logic [7:0]  cpu_data_out,
+    output logic [12:0] cpu_vram_addr,
+    output logic [7:0] cpu_vram_datain,
+    output logic cpu_vram_we,
+    output logic nmi_out,
 
     output logic [23:0]  pixel_color,
     output logic        pixel_valid,
@@ -41,6 +45,7 @@ module ppu(
     input  logic [7:0]  vram_data,
     output logic [10:0] vram_addr,
     //output logic        vram_read
+    
     
     output logic hdmi_tmds_clk_n,
     output logic hdmi_tmds_clk_p,
@@ -114,16 +119,18 @@ assign increment = regs[0][2];
 assign name_addr = regs[0][1:0];
 
 // VRAM/CHR-ROM access
+localparam TOTAL_SCANLINES = 262;
+localparam CYCLES_PER_SCANLINE = 341;
 logic [15:0] scanline;
-logic [15:0] ppu_cycle;
+logic [15:0] cycle;
 logic [7:0] name_table_byte, attribute_table_byte, tile_lsb, tile_msb;
 logic [1:0] palette_index;
 logic [3:0] final_color_index;
 logic [5:0] pixel_x;
 
 // PPU address and scrolling registers
-logic [15:0] v; // Current VRAM address (15 bits)
-logic [15:0] t; // Temporary VRAM address (15 bits)
+logic [14:0] v; // Current VRAM address (15 bits)
+logic [14:0] t; // Temporary VRAM address (15 bits)
 logic [2:0]  x; // Fine X scroll
 logic        w; // Write toggle
 logic [7:0]  tile_shift_low, tile_shift_high;
@@ -152,15 +159,46 @@ function automatic [23:0] get_rgb(input [7:0] palette_val);
     endcase
 endfunction
 
+always_comb begin
+    cpu_data_out = regs[cpu_addr];
+end
+
 // CPU bus
 always_ff @(posedge clk) begin
     if(reset) begin
         for (int i = 0; i < 8; i++) begin
             regs[i] <= 8'd0;
         end
+        regs[2] <= 8'b10000000;
+        v <= 11'b0;
+        w <= 1'b0;
+        nmi_out <= 1'b1;
+        scanline <= 0;
+            cycle <= 0;
     end else begin
-        if(cpu_we) begin
+            if (cycle == CYCLES_PER_SCANLINE - 1) begin
+                cycle <= 0;
+                if (scanline == TOTAL_SCANLINES - 1)
+                    scanline <= 0;
+                else
+                    scanline <= scanline + 1;
+            end else begin
+                cycle <= cycle + 1;
+            end
+            if(nmi) begin
+                // Enter VBlank at scanline 241
+                if (scanline == 241 && cycle == 1)
+                    nmi_out <= 1'b0;
+    
+                // Leave VBlank at scanline 261
+                if (scanline == 261 && cycle == 1)
+                    nmi_out <= 1'b1;
+            end
+                
             case(cpu_addr)
+                3'h2: begin // PPP Status
+                    regs[2] <= regs[2] & (8'b01111111); 
+                end
                 3'h5: begin // PPU Scrolling
                     // Y-scroll
                     if(w) begin
@@ -175,30 +213,39 @@ always_ff @(posedge clk) begin
                     end
                 end
                 3'h6: begin // PPUADDR
-                    if(w) begin
-                        // High byte-ish
-                        t[13:8] <= cpu_data_in[5:0];
-                        w <= 0;
-                    end else begin
-                        // Low byte
-                        t[7:0] <= cpu_data_in[7:0];
-                        v <= t;
-                        w <= 1;
+                    if(cpu_we) begin
+                        if(!w) begin
+                            // High byte-ish
+                            t[14:8] <= cpu_data_in[6:0];
+                            w <= 1;
+                        end else begin
+                            // Low byte
+                            t[7:0] <= cpu_data_in[7:0];
+                            //v <= t;
+                            w <= 0;
+                        end
                     end
                 end
                 3'h7: begin // PPU Data
-                    if (v < 11'd2048) begin
-                        //vram_addr <= v[10:0];
-                        vram_read <= 0;
-                    end else if (v >= 16'h3F00 && v <= 16'h3F1F) begin
-                        palette_ram[v[4:0]] <= cpu_data_in;
-                    end
-                    v <= v + (increment ? 32 : 1);
+                    if(cpu_we)  begin
+                        if (t >= 15'h2000 && t < 15'h3000) begin
+                            cpu_vram_addr <= t[10:0];
+                            cpu_vram_we <= 1'b1;
+                            cpu_vram_datain <= cpu_data_in;
+                        end 
+                        //else if (v >= 16'h3F00 && v <= 16'h3F1F) begin
+                        //    palette_ram[v[4:0]] <= cpu_data_in;
+                        //end
+                        t <= t + (increment ? 32 : 1);
+                    end                    
                 end
-                default: regs[cpu_addr] <= cpu_data_in;
+                default: begin
+                    cpu_vram_we <= 1'b0;
+                    if(cpu_we && cpu_addr != 2)
+                        regs[cpu_addr] <= cpu_data_in;
+                end
             endcase;
-        end
-        cpu_data_out <= regs[cpu_addr];
+       
         
     end
 end
@@ -223,24 +270,10 @@ assign palette_addr = {1'b0, palette_latch, pixel_bits};
 // Pixel rendering USES 25 MHZ
 always_ff @(posedge clk_25MHz) begin
     if(reset) begin
-        scanline <= 0;
-        ppu_cycle <= 0;
         pixel_color <= 24'h00FFFF;
         pixel_valid <= 0; // Might not be needed
         name_table_byte <= 0;
     end else begin
-    
-        // Each scanline is 341 PPU cycles
-        // Each frame is 262 framelines
-        if(ppu_cycle <= 340)
-            ppu_cycle <= ppu_cycle +  1;
-        else begin
-            ppu_cycle <= 0;
-            if (scanline < 261)
-                scanline <= scanline + 1;
-            else
-                scanline <= 0;
-        end
         
         // Rendering
         // Resolution of 256x240, not all cycles are visible
@@ -250,7 +283,6 @@ always_ff @(posedge clk_25MHz) begin
                       vram_addr <= drawX[9:3] + 32 * drawY[9:3];
                 end
                 3'b1: begin // Read from Nametable/VRAM
-                    vram_read <= 1;
                 end
                 3'd2: begin
                     

@@ -18,7 +18,7 @@
 // Additional Comments:
 // 
 //////////////////////////////////////////////////////////////////////////////////
-`define SIM_VIDEO
+//`define SIM_VIDEO
 
 module nes_testbench(
 
@@ -43,7 +43,12 @@ module nes_testbench(
 
     // Reset pulse
     initial begin
-        #20 reset = 0;
+        #700 reset = 0;
+    end
+    
+    initial begin
+        nes.clk_reset = 1;
+        #5 nes.clk_reset = 0;
     end
     
     localparam BMP_WIDTH  = 640;
@@ -83,20 +88,21 @@ module nes_testbench(
     endtask
     
     int i, j;
-    always@(posedge clk) begin
-        if (reset) begin
-            for (j = 0; j < BMP_HEIGHT; j++) begin    //assign bitmap default to some light gray so we 
-                for (i = 0; i < BMP_WIDTH; i++) //can tell the difference between drawn black
-                    bitmap[i][j] <= 24'h0F0FFF; //and default color
-                    end
-        end
-        else
-            if (nes.p.vde) //Only draw when not in the blanking interval
-                bitmap[nes.p.drawX][nes.p.drawY] <= {nes.pixel_color[23:16], nes.pixel_color[15:8],nes.pixel_color[7:0]};
-     end
+//    always@(posedge clk) begin
+//        if (reset) begin
+//            for (j = 0; j < BMP_HEIGHT; j++) begin    //assign bitmap default to some light gray so we 
+//                for (i = 0; i < BMP_WIDTH; i++) //can tell the difference between drawn black
+//                    bitmap[i][j] <= 24'h0F0FFF; //and default color
+//                    end
+//        end
+//        else
+//            if (nes.p.vde) //Only draw when not in the blanking interval
+//                bitmap[nes.p.drawX][nes.p.drawY] <= {nes.pixel_color[23:16], nes.pixel_color[15:8],nes.pixel_color[7:0]};
+//     end
     
     initial begin
-        #700000;
+        //#10000000;
+        #100000
         `ifdef SIM_VIDEO
 		//wait (~pixel_vs);
 		save_bmp ("lab7_1_sim_test.bmp");

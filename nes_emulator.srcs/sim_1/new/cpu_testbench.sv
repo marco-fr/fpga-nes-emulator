@@ -52,7 +52,6 @@ module cpu_testbench(
         memory[16'hFFFD] = 8'h00;
     end
 
-    // Hook up memory
     always_ff @(posedge clk) begin
         if (WE) begin
             memory[AB] <= DO;
@@ -60,7 +59,6 @@ module cpu_testbench(
         DI <= memory[AB];
     end
 
-    // Instantiate Arlet's 6502 CPU
     cpu cpu_inst (
         .clk(clk),
         .reset(reset),
