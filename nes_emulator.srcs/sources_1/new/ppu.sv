@@ -141,7 +141,8 @@ assign name_addr = regs[0][1:0];
 
 // VRAM/CHR-ROM access
 localparam TOTAL_SCANLINES = 262;
-localparam CYCLES_PER_SCANLINE = 341;
+//localparam CYCLES_PER_SCANLINE = 341;
+localparam CYCLES_PER_SCANLINE = 200;
 logic [15:0] scanline;
 logic [15:0] cycle;
 logic [7:0] name_table_byte, attribute_table_byte, tile_lsb, tile_msb;
@@ -156,8 +157,9 @@ logic [2:0]  x; // Fine X scroll
 logic        w; // Write toggle
 logic [7:0]  tile_shift_low, tile_shift_high;
 
-// Palette RAM (32 bytes)
+// Background Palette RAM (16 bytes)
 logic [7:0] palette_ram [0:31];
+
 
 // NES palette: 6-bit RGB values from palette index (converted to 24-bit RGB)
 function automatic [23:0] get_rgb(input [7:0] palette_val);
@@ -180,6 +182,7 @@ function automatic [23:0] get_rgb(input [7:0] palette_val);
     endcase
 endfunction
 
+// Always output current what register the CPU is looking at
 always_comb begin
     cpu_data_out = regs[cpu_addr];
 end
@@ -193,6 +196,9 @@ always_ff @(posedge clk) begin
         for (int j = 0; j < 256; j++) begin
             OAM_regs[j] <= 8'b1;
         end
+        for (int i = 0; i < 32; i++) begin
+            palette_ram[i] <= 8'd0;
+        end
         regs[2] <= 8'b10000000;
         v <= 11'b0;
         w <= 1'b0;
@@ -205,6 +211,7 @@ always_ff @(posedge clk) begin
         oam_start_addr <= 8'b0;
     end else begin
             cpu_ready <= 1'b1;
+
             // NMI for VBlank
             if (cycle == CYCLES_PER_SCANLINE - 1) begin
                 cycle <= 0;
@@ -215,6 +222,7 @@ always_ff @(posedge clk) begin
             end else begin
                 cycle <= cycle + 1;
             end
+
             if(nmi) begin
                 // Enter VBlank at scanline 241
                 if (scanline == 241 && cycle == 1)
@@ -227,19 +235,18 @@ always_ff @(posedge clk) begin
             
             // OAM
             if(oam_counter > 0 && oam_finished == 1'b0) begin
-                //if(oam_finished == 0) begin
-                    cpu_ready <= 1'b0;
-                    if(oam_counter == 257) begin
-                        oam_finished <= 1'b1;
-                    end
-                    if(oam_bram_wait == 1'b0) begin
-                        oam_cpu_ram_addr <= {oam_start_addr[4:0], oam_shifted_counter[7:0]};
-                    end else begin
-                        OAM_regs[oam_shifted_counter[7:0]] <= oam_cpu_ram_data;
-                        oam_counter <= oam_counter + 9'b1;
-                    end
-                    oam_bram_wait <= ~oam_bram_wait;
-                //end
+                // Pause CPU
+                cpu_ready <= 1'b0;
+                if(oam_counter == 257) begin
+                    oam_finished <= 1'b1;
+                end
+                if(oam_bram_wait == 1'b0) begin
+                    oam_cpu_ram_addr <= {oam_start_addr[4:0], oam_shifted_counter[7:0]};
+                end else begin
+                    OAM_regs[oam_shifted_counter[7:0]] <= oam_cpu_ram_data;
+                    oam_counter <= oam_counter + 9'b1;
+                end
+                oam_bram_wait <= ~oam_bram_wait;
             end else begin
                 oam_start_addr <= oam_cpu_start_addr;
                 oam_counter <= oamdma_begin;
@@ -253,13 +260,11 @@ always_ff @(posedge clk) begin
                     // Set VBlank when read
                     regs[2] <= regs[2] & (8'b01111111); 
                 end
-                // 3: OAM Address (No extra logic)
-                // 4: OAM Data (Not used by most games)
-//                3'h4: begin // OAM Data
-//                    if(cpu_we) begin
-//                        OAM_regs[regs[3]] <= cpu_data_in;
-//                    end
-//                end
+                3'h4: begin // OAM Data
+                    if(cpu_we) begin
+                        OAM_regs[regs[3]] <= cpu_data_in;
+                    end
+                end
                 3'h5: begin // PPU Scrolling
                     // Y-scroll
                     if(w) begin
@@ -273,7 +278,7 @@ always_ff @(posedge clk) begin
                         w <= 1;
                     end
                 end
-                3'h6: begin // PPUADDR
+                3'h6: begin // PPU Address
                     if(cpu_we) begin
                         if(!w) begin
                             // High byte-ish
@@ -293,10 +298,14 @@ always_ff @(posedge clk) begin
                             cpu_vram_addr <= t[10:0];
                             cpu_vram_we <= 1'b1;
                             cpu_vram_datain <= cpu_data_in;
-                        end 
-                        //else if (v >= 16'h3F00 && v <= 16'h3F1F) begin
-                        //    palette_ram[v[4:0]] <= cpu_data_in;
-                        //end
+                        end
+                        else if (t >= 15'h3F00 && t < 15'h4000) begin
+                            if (t[4:0] == 5'h10 || t[4:0] == 5'h14 || 
+                                t[4:0] == 5'h18 || t[4:0] == 5'h1C)
+                                palette_ram[t[4:0] - 16] <= cpu_data_in;
+                            else
+                                palette_ram[t[4:0]] <= cpu_data_in;
+                        end
                         t <= t + (increment ? 32 : 1);
                     end                    
                 end
@@ -324,10 +333,9 @@ logic pixel_high;
 assign pixel_high = tile_shift_high[bit_index];
 logic [1:0] pixel_bits;
 assign pixel_bits = {pixel_high, pixel_low};
-logic [1:0] palette_latch;
-assign palette_latch = 2'b0;
-logic [4:0] palette_addr;
-assign palette_addr = {1'b0, palette_latch, pixel_bits};
+logic [1:0] tile_attribute_bits;
+logic [5:0] palette_addr;
+assign palette_addr = palette_ram[{1'b0, tile_attribute_bits, pixel_bits}];
 
 // Sprite 4-Byte Definition
 typedef struct packed {
@@ -397,7 +405,9 @@ end
 // Compensate for rendering delay
 logic [9:0] delayedX, delayedY;
 always_comb begin
-    delayedX = (drawX + 8) % 640;
+    delayedX = (drawX + 8);
+    if(drawX >= 632)
+        delayedX = drawX[2:0];
     delayedY = drawY;
     if(drawX + 8 >= 640) begin
         delayedY = (drawY + 1) % 480;
@@ -421,21 +431,27 @@ always_ff @(posedge clk_25MHz) begin
             3'd2: begin                
                 name_table_byte <= vram_data;
                 chr_rom_addr <= {regs[0][4], vram_data, 1'b0, delayedY[2:0]};
-                vram_addr <= vram_addr + 10'h3C0;
+                vram_addr <= 11'h3C0 + delayedY[9:5] * 8 + delayedX[9:5];
             end
-            3'd3: begin
+            3'd4: begin
                 attribute_table_byte <= vram_data;
             end
             3'd5: begin
                     tile_lsb <= chr_rom_data;
                     chr_rom_addr <= {regs[0][4], name_table_byte, 1'b1, delayedY[2:0]};
-                
+            end 
+            3'd6: begin
+                case ({delayedY[4], delayedX[4]})
+                    2'b00: tile_attribute_bits <= attribute_table_byte[1:0]; // top-left
+                    2'b01: tile_attribute_bits <= attribute_table_byte[3:2]; // top-right
+                    2'b10: tile_attribute_bits <= attribute_table_byte[5:4]; // bottom-left
+                    2'b11: tile_attribute_bits <= attribute_table_byte[7:6]; // bottom-right
+                endcase
             end
             3'd7: begin
                 tile_msb <= chr_rom_data;
                 tile_shift_low <= tile_lsb;
                 tile_shift_high <= chr_rom_data;
-                
             end
             default;
         endcase
@@ -446,6 +462,7 @@ end
 logic found_sprite;
 logic [23:0] sprite_pixel;
 logic [2:0] sprite_offset;
+logic [5:0] sprite_palette_addr;
 always_comb begin
     found_sprite = 1'b0;
     for(int i = 0; i < sprite_count; i++) begin
@@ -455,19 +472,99 @@ always_comb begin
                 sprite_offset = 7 - (drawX - visible_sprites[i].x);
                 if(visible_sprites[i].attr[6])
                     sprite_offset = drawX - visible_sprites[i].x;
-                sprite_pixel = get_rgb({3'b0, visible_sprites[i].msb[sprite_offset], visible_sprites[i].lsb[sprite_offset]});
+                sprite_palette_addr = palette_ram[{1'b1, visible_sprites[i].attr[1:0], 
+                    visible_sprites[i].msb[sprite_offset], 
+                    visible_sprites[i].lsb[sprite_offset]}];
+                if({visible_sprites[i].msb[sprite_offset], visible_sprites[i].lsb[sprite_offset]} == 2'd0)
+                    found_sprite = 1'b0;
             end
         end
     end
 
     if(drawX <= 255 && drawY < 240) begin
-        pixel_color = get_rgb(palette_addr);
+        pixel_color = get_palette_color(palette_addr);
         if(found_sprite == 1'b1)
-            pixel_color = sprite_pixel;
+            pixel_color = get_palette_color(sprite_palette_addr);
     end
     else
         pixel_color = 24'h0000FF;
 end
+
+// Fixed 64-color palette
+function automatic logic [23:0] get_palette_color(input logic [5:0] color_index);
+    case (color_index)
+        6'h00: get_palette_color = 24'h7C7C7C;
+        6'h01: get_palette_color = 24'h0000FC;
+        6'h02: get_palette_color = 24'h0000BC;
+        6'h03: get_palette_color = 24'h4428BC;
+        6'h04: get_palette_color = 24'h940084;
+        6'h05: get_palette_color = 24'hA80020;
+        6'h06: get_palette_color = 24'hA81000;
+        6'h07: get_palette_color = 24'h881400;
+        6'h08: get_palette_color = 24'h503000;
+        6'h09: get_palette_color = 24'h007800;
+        6'h0A: get_palette_color = 24'h006800;
+        6'h0B: get_palette_color = 24'h005800;
+        6'h0C: get_palette_color = 24'h004058;
+        6'h0D: get_palette_color = 24'h000000;
+        6'h0E: get_palette_color = 24'h000000;
+        6'h0F: get_palette_color = 24'h000000;
+
+        6'h10: get_palette_color = 24'hBCBCBC;
+        6'h11: get_palette_color = 24'h0078F8;
+        6'h12: get_palette_color = 24'h0058F8;
+        6'h13: get_palette_color = 24'h6844FC;
+        6'h14: get_palette_color = 24'hD800CC;
+        6'h15: get_palette_color = 24'hE40058;
+        6'h16: get_palette_color = 24'hF83800;
+        6'h17: get_palette_color = 24'hE45C10;
+        6'h18: get_palette_color = 24'hAC7C00;
+        6'h19: get_palette_color = 24'h00B800;
+        6'h1A: get_palette_color = 24'h00A800;
+        6'h1B: get_palette_color = 24'h00A844;
+        6'h1C: get_palette_color = 24'h008888;
+        6'h1D: get_palette_color = 24'h000000;
+        6'h1E: get_palette_color = 24'h000000;
+        6'h1F: get_palette_color = 24'h000000;
+
+        6'h20: get_palette_color = 24'hF8F8F8;
+        6'h21: get_palette_color = 24'h3CBCFC;
+        6'h22: get_palette_color = 24'h6888FC;
+        6'h23: get_palette_color = 24'h9878F8;
+        6'h24: get_palette_color = 24'hF878F8;
+        6'h25: get_palette_color = 24'hF85898;
+        6'h26: get_palette_color = 24'hF87858;
+        6'h27: get_palette_color = 24'hFCA044;
+        6'h28: get_palette_color = 24'hF8B800;
+        6'h29: get_palette_color = 24'hB8F818;
+        6'h2A: get_palette_color = 24'h58D854;
+        6'h2B: get_palette_color = 24'h58F898;
+        6'h2C: get_palette_color = 24'h00E8D8;
+        6'h2D: get_palette_color = 24'h787878;
+        6'h2E: get_palette_color = 24'h000000;
+        6'h2F: get_palette_color = 24'h000000;
+
+        6'h30: get_palette_color = 24'hFCFCFC;
+        6'h31: get_palette_color = 24'hA4E4FC;
+        6'h32: get_palette_color = 24'hB8B8F8;
+        6'h33: get_palette_color = 24'hD8B8F8;
+        6'h34: get_palette_color = 24'hF8B8F8;
+        6'h35: get_palette_color = 24'hF8A4C0;
+        6'h36: get_palette_color = 24'hF0D0B0;
+        6'h37: get_palette_color = 24'hFCE0A8;
+        6'h38: get_palette_color = 24'hF8D878;
+        6'h39: get_palette_color = 24'hD8F878;
+        6'h3A: get_palette_color = 24'hB8F8B8;
+        6'h3B: get_palette_color = 24'hB8F8D8;
+        6'h3C: get_palette_color = 24'h00FCFC;
+        6'h3D: get_palette_color = 24'hF8D8F8;
+        6'h3E: get_palette_color = 24'h000000;
+        6'h3F: get_palette_color = 24'h000000;
+
+        default: get_palette_color = 24'h000000;
+    endcase
+endfunction
+
 
 
 endmodule

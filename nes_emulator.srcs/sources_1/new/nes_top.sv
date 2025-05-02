@@ -280,7 +280,8 @@ module nes_top(
         end
         // PRG-ROM
         else if (AB >= 16'h8000) begin
-            prg_rom_addr = AB[13:0];
+            // Change to 13 if 16 KB PRG
+            prg_rom_addr = AB[14:0];
             DI = prg_rom_data;
         end
     end

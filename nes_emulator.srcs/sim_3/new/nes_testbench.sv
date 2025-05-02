@@ -31,6 +31,17 @@ module nes_testbench(
     logic [2:0]hdmi_tmds_data_p;
        logic uart_rtl_0_rxd;
     logic uart_rtl_0_txd;
+    logic [0:0] gpio_usb_int_tri_i;
+    logic gpio_usb_rst_tri_o;
+    logic usb_spi_miso;
+    logic usb_spi_mosi;
+    logic usb_spi_sclk;
+    logic usb_spi_ss;
+    
+    logic [7:0] hex_segA;
+    logic [3:0] hex_gridA;
+    logic [7:0] hex_segB;
+    logic [3:0] hex_gridB;
     
     nes_top nes(
         .Clk(clk),
