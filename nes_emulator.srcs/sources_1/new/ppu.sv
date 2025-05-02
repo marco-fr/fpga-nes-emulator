@@ -35,6 +35,16 @@ module ppu(
     output logic cpu_vram_we,
     output logic nmi_out,
 
+    // OAM
+    input logic [7:0] oam_cpu_start_addr,
+    input logic [8:0]oamdma_begin,
+    input logic [7:0] oam_cpu_ram_data,
+    output logic [12:0] oam_cpu_ram_addr,
+    output logic [12:0] sprite_chr_rom_addr,
+    input logic [7:0] sprite_chr_rom_data,
+    
+    output logic cpu_ready,
+
     output logic [23:0]  pixel_color,
     output logic        pixel_valid,
 
@@ -104,6 +114,17 @@ hdmi_tx_0 vga_to_hdmi (
         .TMDS_DATA_P(hdmi_tmds_data_p),         
         .TMDS_DATA_N(hdmi_tmds_data_n)          
     );
+    
+// OAM
+logic [7:0] OAM_regs[256];
+logic [7:0] oam_start_addr;
+logic [8:0] oam_counter;
+logic oam_bram_wait;
+logic [8:0] oam_shifted_counter;
+logic [7:0] dma_index;
+logic oam_finished;
+
+assign oam_shifted_counter = oam_counter - 9'b1;
 
 // CPU visible registers
 logic [7:0] regs [8];
@@ -169,13 +190,22 @@ always_ff @(posedge clk) begin
         for (int i = 0; i < 8; i++) begin
             regs[i] <= 8'd0;
         end
+        for (int j = 0; j < 256; j++) begin
+            OAM_regs[j] <= 8'b1;
+        end
         regs[2] <= 8'b10000000;
         v <= 11'b0;
         w <= 1'b0;
         nmi_out <= 1'b1;
         scanline <= 0;
-            cycle <= 0;
+        cycle <= 0;
+        oam_counter <= 9'b0;
+        oam_cpu_ram_addr <= 13'b0;
+        oam_finished <= 1'b0;
+        oam_start_addr <= 8'b0;
     end else begin
+            cpu_ready <= 1'b1;
+            // NMI for VBlank
             if (cycle == CYCLES_PER_SCANLINE - 1) begin
                 cycle <= 0;
                 if (scanline == TOTAL_SCANLINES - 1)
@@ -194,11 +224,42 @@ always_ff @(posedge clk) begin
                 if (scanline == 261 && cycle == 1)
                     nmi_out <= 1'b1;
             end
-                
+            
+            // OAM
+            if(oam_counter > 0 && oam_finished == 1'b0) begin
+                //if(oam_finished == 0) begin
+                    cpu_ready <= 1'b0;
+                    if(oam_counter == 257) begin
+                        oam_finished <= 1'b1;
+                    end
+                    if(oam_bram_wait == 1'b0) begin
+                        oam_cpu_ram_addr <= {oam_start_addr[4:0], oam_shifted_counter[7:0]};
+                    end else begin
+                        OAM_regs[oam_shifted_counter[7:0]] <= oam_cpu_ram_data;
+                        oam_counter <= oam_counter + 9'b1;
+                    end
+                    oam_bram_wait <= ~oam_bram_wait;
+                //end
+            end else begin
+                oam_start_addr <= oam_cpu_start_addr;
+                oam_counter <= oamdma_begin;
+                oam_finished <= 1'b0;
+                oam_bram_wait <= 1'b0;
+            end
+            
+            // CPU Register IO 
             case(cpu_addr)
-                3'h2: begin // PPP Status
+                3'h2: begin // PPU Status
+                    // Set VBlank when read
                     regs[2] <= regs[2] & (8'b01111111); 
                 end
+                // 3: OAM Address (No extra logic)
+                // 4: OAM Data (Not used by most games)
+//                3'h4: begin // OAM Data
+//                    if(cpu_we) begin
+//                        OAM_regs[regs[3]] <= cpu_data_in;
+//                    end
+//                end
                 3'h5: begin // PPU Scrolling
                     // Y-scroll
                     if(w) begin
@@ -240,6 +301,7 @@ always_ff @(posedge clk) begin
                     end                    
                 end
                 default: begin
+                    // Move out after testing
                     cpu_vram_we <= 1'b0;
                     if(cpu_we && cpu_addr != 2)
                         regs[cpu_addr] <= cpu_data_in;
@@ -250,7 +312,7 @@ always_ff @(posedge clk) begin
     end
 end
 
-// 
+// Rendering
 logic [2:0] cycle_offset;
 assign cycle_offset = drawX % 8;
 
@@ -267,55 +329,144 @@ assign palette_latch = 2'b0;
 logic [4:0] palette_addr;
 assign palette_addr = {1'b0, palette_latch, pixel_bits};
 
-// Pixel rendering USES 25 MHZ
+// Sprite 4-Byte Definition
+typedef struct packed {
+    logic [7:0] y;
+    logic [7:0] tile;
+    logic [7:0] attr;
+    logic [7:0] x;
+    logic [7:0] lsb;
+    logic [7:0] msb;
+} sprite_t;
+
+sprite_t visible_sprites [8];
+logic [7:0] sprite_y;
+// Get first 8 visible sprites for current scanline
+logic [3:0] sprite_count;
+
+assign sprite_y = OAM_regs[(drawX - 256) * 4 + 0];
+
+// Load Sprite CHR-ROM bytes during blanking period
+logic [8:0] sprite_load_counter;
+logic [7:0] sprite_name_table_byte;
+logic [2:0] cur_sprite_load;
+logic [2:0] cur_sprite_y_offset;
+
+assign cur_sprite_load = sprite_load_counter[5:3];
+assign cur_sprite_y_offset = drawY - visible_sprites[cur_sprite_load].y;
+
 always_ff @(posedge clk_25MHz) begin
     if(reset) begin
-        pixel_color <= 24'h00FFFF;
-        pixel_valid <= 0; // Might not be needed
-        name_table_byte <= 0;
+        sprite_chr_rom_addr <= 13'b0;
+        //cur_sprite_load <= 3'b0;
+        sprite_name_table_byte <= 8'b0;
     end else begin
-        
-        // Rendering
-        // Resolution of 256x240, not all cycles are visible
-        pixel_valid <= 0;
-            case(cycle_offset)
-                3'b0: begin // Load shift register 
-                      vram_addr <= drawX[9:3] + 32 * drawY[9:3];
-                end
-                3'b1: begin // Read from Nametable/VRAM
-                end
-                3'd2: begin
-                    
-                    name_table_byte <= vram_data;
-                    chr_rom_addr <= {regs[0][4], vram_data, 1'b0, drawY[2:0]};
-                    //$display(vram_data);
-                    vram_addr <= vram_addr + 10'h3C0;
-                end
-                3'd3: begin
-                    attribute_table_byte <= vram_data;
+        if(drawX == 255)
+            sprite_count <= 0;
+        if(drawX >= 256 && drawX < 320) begin
+            if (drawY >= sprite_y && drawY < sprite_y + 8 && sprite_count < 8) begin
+                visible_sprites[sprite_count].y    <= sprite_y;
+                visible_sprites[sprite_count].tile <= OAM_regs[(drawX - 256) * 4 + 1];
+                visible_sprites[sprite_count].attr <= OAM_regs[(drawX - 256) * 4 + 2];
+                visible_sprites[sprite_count].x    <= OAM_regs[(drawX - 256) * 4 + 3];
+                sprite_count <= sprite_count + 1;
+            end
+        end
+        if(drawX >= 320 && drawX < 384) begin
+            case(sprite_load_counter[2:0])
+                3'd2: begin                
+                    sprite_name_table_byte <= visible_sprites[cur_sprite_load].tile;
+                    sprite_chr_rom_addr <= {regs[0][3], visible_sprites[cur_sprite_load].tile, 1'b0, cur_sprite_y_offset};
                 end
                 3'd5: begin
-                     tile_lsb <= chr_rom_data;
-                     chr_rom_addr <= {regs[0][4], name_table_byte, 1'b1, drawY[2:0]};
-                    
+                    visible_sprites[cur_sprite_load].lsb <= sprite_chr_rom_data;
+                    sprite_chr_rom_addr <= {regs[0][3], sprite_name_table_byte, 1'b1, cur_sprite_y_offset};
                 end
                 3'd7: begin
-                    tile_msb <= chr_rom_data;
-                    tile_shift_low <= tile_lsb;
-                    tile_shift_high <= chr_rom_data;
-                    
+                    visible_sprites[cur_sprite_load].msb <= sprite_chr_rom_data;
                 end
                 default;
             endcase
-            if(drawX == 120 && drawY == 5)
-                $display("%h", tile_msb);
-            //pixel_color <= get_rgb(palette_ram[palette_addr]);
-            if(drawX <= 255 && drawY < 240)
-                pixel_color <= get_rgb(palette_addr);
-            else
-                pixel_color <= 24'h0000FF;
-            pixel_valid <= 1;
+            sprite_load_counter <= sprite_load_counter + 9'b1;
+        end else begin
+            sprite_load_counter <= 9'b0;
+        end
     end
+end
+
+// Compensate for rendering delay
+logic [9:0] delayedX, delayedY;
+always_comb begin
+    delayedX = (drawX + 8) % 640;
+    delayedY = drawY;
+    if(drawX + 8 >= 640) begin
+        delayedY = (drawY + 1) % 480;
+    end
+end
+
+// Background tiles
+always_ff @(posedge clk_25MHz) begin
+    if(reset) begin
+        pixel_valid <= 0; // Might not be needed
+        name_table_byte <= 0;
+        
+    end else begin
+        // Resolution of 256x240, not all cycles are visible
+        pixel_valid <= 0;
+
+        case(cycle_offset)
+            3'b0: begin // Load shift register 
+                    vram_addr <= delayedX[9:3] + 32 * delayedY[9:3];
+            end
+            3'd2: begin                
+                name_table_byte <= vram_data;
+                chr_rom_addr <= {regs[0][4], vram_data, 1'b0, delayedY[2:0]};
+                vram_addr <= vram_addr + 10'h3C0;
+            end
+            3'd3: begin
+                attribute_table_byte <= vram_data;
+            end
+            3'd5: begin
+                    tile_lsb <= chr_rom_data;
+                    chr_rom_addr <= {regs[0][4], name_table_byte, 1'b1, delayedY[2:0]};
+                
+            end
+            3'd7: begin
+                tile_msb <= chr_rom_data;
+                tile_shift_low <= tile_lsb;
+                tile_shift_high <= chr_rom_data;
+                
+            end
+            default;
+        endcase
+    end
+end
+
+// Pixel Rendering
+logic found_sprite;
+logic [23:0] sprite_pixel;
+logic [2:0] sprite_offset;
+always_comb begin
+    found_sprite = 1'b0;
+    for(int i = 0; i < sprite_count; i++) begin
+        if(found_sprite == 1'b0) begin
+            if(visible_sprites[i].x <= drawX && visible_sprites[i].x + 8 > drawX) begin
+                found_sprite = 1'b1;
+                sprite_offset = 7 - (drawX - visible_sprites[i].x);
+                if(visible_sprites[i].attr[6])
+                    sprite_offset = drawX - visible_sprites[i].x;
+                sprite_pixel = get_rgb({3'b0, visible_sprites[i].msb[sprite_offset], visible_sprites[i].lsb[sprite_offset]});
+            end
+        end
+    end
+
+    if(drawX <= 255 && drawY < 240) begin
+        pixel_color = get_rgb(palette_addr);
+        if(found_sprite == 1'b1)
+            pixel_color = sprite_pixel;
+    end
+    else
+        pixel_color = 24'h0000FF;
 end
 
 

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="ASCII"?>
+<sdkproject:SdkProject xmi:version="2.0" xmlns:xmi="http://www.omg.org/XMI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:sdkproject="http://www.xilinx.com/sdkproject" name="nes_usb" location="/home/marco/uiuc/ece_385/labs/nes_emulator/nes_sdk/nes_usb" platform="/home/marco/uiuc/ece_385/labs/nes_emulator/nes_sdk/nes_top/export/nes_top/nes_top.xpfm" platformUID="xilinx:::0.0(custom)" systemProject="nes_usb_system" sysConfig="nes_top" runtime="cpp" cpu="standalone_microblaze_0" cpuInstance="microblaze_0" os="standalone" mssSignature="21a214d7d10e49544f5028b83a18c356">
+  <configuration name="Debug" id="xilinx.gnu.mb.exe.debug.463040705">
+    <configBuildOptions xsi:type="sdkproject:SdkOptions"/>
+    <lastBuildOptions xsi:type="sdkproject:SdkOptions"/>
+  </configuration>
+  <configuration name="Release" id="xilinx.gnu.mb.exe.release.131983130" dirty="true">
+    <configBuildOptions xsi:type="sdkproject:SdkOptions"/>
+  </configuration>
+  <template appTemplateName="hello_world"/>
+</sdkproject:SdkProject>
