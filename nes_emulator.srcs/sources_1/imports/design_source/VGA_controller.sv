@@ -28,6 +28,7 @@ module  vga_controller ( input        pixel_clk,        // 50 MHz clock
                          output logic hs,               // Horizontal sync pulse.  Active low
 								      vs,               // Vertical sync pulse.  Active low
 									  active_nblank,    // High = active, low = blanking interval
+                                      vblank,
 									  sync,      // Composite Sync signal.  Active low.  We don't use it in this lab,
 									            //   but the video DAC on the DE2 board requires an input for it.
 						 output [9:0] drawX,     // horizontal coordinate
@@ -107,6 +108,10 @@ module  vga_controller ( input        pixel_clk,        // 50 MHz clock
             display = 1'b0;
         else 
             display = 1'b1;
+        if(vc >= 10'd241)
+            vblank = 1'b1;
+        else
+            vblank = 1'b0;
     end 
    
     assign active_nblank = display;    

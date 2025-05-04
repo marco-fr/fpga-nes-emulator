@@ -102,7 +102,7 @@ module nes_top(
     
     
     // VRAM BRAM Configuration
-    logic [12:0] vram_addr;
+    logic [10:0] vram_mirror_addr;
     logic [7:0] vram_data;
     logic [7:0] vram_dina;
     assign vram_dina = 0;
@@ -113,8 +113,8 @@ module nes_top(
     logic cpu_vram_we;
     logic [7:0]  cpu_data_in;
     logic [7:0]  cpu_data_out;
-    logic [7:0]  cpu_doutb;
-    logic [12:0]  cpu_vram_addr;
+    logic [7:0]  cpu_vram_doutb;
+    logic [10:0]  cpu_mirror_vram_addr;
     logic [7:0] cpu_vram_datain;
 
     // OAM
@@ -278,6 +278,11 @@ module nes_top(
                 DI = {7'b0, cpu_controller_byte[0]};
             end
         end
+        // For testing
+        //else if(AB == 16'hFFFC)
+            //DI = 8'h00;
+        //else if(AB == 16'hFFFD)
+            //DI = 8'h80;
         // PRG-ROM
         else if (AB >= 16'h8000) begin
             // Change to 13 if 16 KB PRG
@@ -330,8 +335,8 @@ module nes_top(
     logic [12:0] chr_rom_addr;
     logic [7:0] chr_rom_data;
 
-    logic [12:0] sprite_chr_rom_addr;
-    logic [7:0] sprite_chr_rom_data;
+    logic [12:0] cpu_chr_rom_addr;
+    logic [7:0] cpu_chr_rom_data;
     
     CHR_ROM chr_rom(
         .addra(chr_rom_addr),
@@ -341,26 +346,26 @@ module nes_top(
         .ena(1'b1),
         .wea(1'b0),
 
-        .addrb(sprite_chr_rom_addr),
+        .addrb(cpu_chr_rom_addr),
         .clkb(clk_25MHz),
-        .doutb(sprite_chr_rom_data),
+        .doutb(cpu_chr_rom_data),
         .dinb(8'b0),
         .enb(1'b1),
         .web(1'b0)
     );
     
     VRAM vram(
-        .addra(vram_addr),
+        .addra(vram_mirror_addr),
         .clka(clk_25MHz),
         .dina(vram_dina),
         .douta(vram_data),
         .ena(1'b1),
         .wea(1'b0),
         
-        .addrb(cpu_vram_addr),
+        .addrb(cpu_mirror_vram_addr),
         .clkb(clk_25MHz),
         .dinb(cpu_vram_datain),
-        .doutb(cpu_doutb),
+        .doutb(cpu_vram_doutb),
         .enb(1'b1),
         .web(cpu_vram_we)
     );

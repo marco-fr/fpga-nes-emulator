@@ -112,8 +112,8 @@ module nes_testbench(
 //     end
     
     initial begin
-        #20000000;
-        //#100000
+        //#20000000;
+        #100000;
         `ifdef SIM_VIDEO
 		//wait (~pixel_vs);
 		save_bmp ("lab7_1_sim_test.bmp");
