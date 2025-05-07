@@ -1,26 +1,5 @@
 `timescale 1ns / 1ps
 
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 04/18/2025 05:46:15 PM
-// Design Name: 
-// Module Name: ppu
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-
-
 module ppu(
     input  logic        clk,
     input  logic        reset,
@@ -139,7 +118,6 @@ assign sprite_size = regs[0][5];
 assign pattern_addr = regs[0][4];
 assign sprite_pattern_addr = regs[0][3];
 assign increment = regs[0][2];
-assign name_addr = regs[0][1:0];
 //assign name_addr = 2'd0;
 logic [11:0] cpu_vram_addr, vram_addr;
 
@@ -150,8 +128,9 @@ logic [3:0] final_color_index;
 logic [5:0] pixel_x;
 
 // PPU address and scrolling registers
-logic [14:0] v; // Current VRAM address (15 bits)
-logic [14:0] t; // Temporary VRAM address (15 bits)
+logic [14:0] v; 
+logic [14:0] t; 
+logic [7:0] tmp_t;
 logic [2:0]  fine_x; // Fine X scroll
 logic [2:0]  fine_y; // Fine Y scroll
 logic [4:0]  scroll_x; // X scroll
@@ -170,16 +149,17 @@ logic [8:0] col_x, col_y;
 always_comb begin
     cpu_data_out = regs[cpu_addr];
     if(cpu_addr == 3'd7) begin
-        if(t < 15'h2000)
+        if(v < 15'h2000)
             cpu_data_out = cpu_chr_rom_data;
-        else if (t < 15'h3000)
+        else if (v < 15'h3000)
             cpu_data_out = cpu_vram_doutb;
     end
         
-    scroll_x = total_scroll_x[7:3];
-    scroll_y = total_scroll_y[7:3];
-    fine_x = total_scroll_x[2:0];
-    fine_y = total_scroll_y[2:0];
+    scroll_x = t[4:0];
+    scroll_y = t[9:5];
+    //fine_x = total_scroll_x[2:0];
+    fine_y = t[14:12];
+    name_addr = t[11:10];
 end
 
 logic vblank_prev;
@@ -215,6 +195,7 @@ always_ff @(posedge clk) begin
         oam_finished <= 1'b0;
         oam_start_addr <= 8'b0;
         ppu_data_final_out <= 8'b0;
+        tmp_t <= 8'b0;
     end else begin
             cpu_ready <= 1'b1;
             cpu_vram_we <= 1'b0;
@@ -245,6 +226,12 @@ always_ff @(posedge clk) begin
             //scroll_x <= 5'd10;
             // CPU Register IO 
             case(cpu_addr)
+                3'h0: begin // PPU Control
+                    if(cpu_we) begin
+                        regs[cpu_addr] <= cpu_data_in;
+                        t[11:10] <= cpu_data_in[1:0];
+                    end
+                end
                 3'h2: begin // PPU Status
                     // Set VBlank when read
                     regs[2][7] <= 1'b0;
@@ -259,11 +246,15 @@ always_ff @(posedge clk) begin
                     if(cpu_we) begin
                         // Y-scroll
                         if(w) begin
-                            total_scroll_y <= cpu_data_in;
+                            //total_scroll_y <= cpu_data_in;
+                            t[14:12] <= cpu_data_in[2:0];
+                            t[9:5] <= cpu_data_in[7:3];
                             w <= 0;
                         // X-scroll
                         end else begin
-                            total_scroll_x <= cpu_data_in;
+                            //total_scroll_x <= cpu_data_in;
+                            t[4:0] <= cpu_data_in[7:3];
+                            fine_x <= cpu_data_in[2:0];
                             w <= 1;
                         end
                     end
@@ -272,19 +263,20 @@ always_ff @(posedge clk) begin
                     if(cpu_we) begin
                         if(!w) begin
                             // High byte-ish
-                            t[14:8] <= cpu_data_in[6:0];
+                            t[13:8] <= cpu_data_in[5:0];
+                            t[14] <= 1'b0;
                             w <= 1;
                         end else begin
                             // Low byte
                             t[7:0] <= cpu_data_in[7:0];
-                            //v <= t;
+                            v <= {t[14:8], cpu_data_in[7:0]};
                             w <= 0;
                         end
                     end
                 end
                 3'h7: begin // PPU Data
-                    if (t >= 15'h2000 && t < 15'h3000) begin
-                        cpu_vram_addr <= t[11:0];
+                    if (v >= 15'h2000 && v < 15'h3000) begin
+                        cpu_vram_addr <= v[11:0];
                         if(cpu_we)  begin
                             cpu_vram_we <= 1'b1;
                             cpu_vram_datain <= cpu_data_in;
@@ -292,35 +284,32 @@ always_ff @(posedge clk) begin
                         else
                             ppu_data_started_read = 1'b1;
                     end
-                    else if (t >= 15'h3F00 && t < 15'h4000) begin
+                    else if (v >= 15'h3F00 && v < 15'h4000) begin
                         if(cpu_we)  begin
-                            if (t[4:0] == 5'h10 || t[4:0] == 5'h14 || 
-                                t[4:0] == 5'h18 || t[4:0] == 5'h1C)
-                                palette_ram[t[4:0] - 16] <= cpu_data_in;
+                            if (v[4:0] == 5'h10 || v[4:0] == 5'h14 || 
+                                v[4:0] == 5'h18 || v[4:0] == 5'h1C)
+                                palette_ram[v[4:0] - 16] <= cpu_data_in;
                             else
-                                palette_ram[t[4:0]] <= cpu_data_in;
+                                palette_ram[v[4:0]] <= cpu_data_in;
                         end else begin
-                            if (t[4:0] == 5'h10 || t[4:0] == 5'h14 || 
-                                t[4:0] == 5'h18 || t[4:0] == 5'h1C)
-                                regs[7] <= palette_ram[t[4:0] - 16];
+                            if (v[4:0] == 5'h10 || v[4:0] == 5'h14 || 
+                                v[4:0] == 5'h18 || v[4:0] == 5'h1C)
+                                regs[7] <= palette_ram[v[4:0] - 16];
                             else
-                                regs[7] <= palette_ram[t[4:0]];
+                                regs[7] <= palette_ram[v[4:0]];
                         end
                     end
-                    if(~cpu_we && t < 15'h2000) begin
-                        cpu_chr_rom_addr <= t[12:0];
+                    if(~cpu_we && v < 15'h2000) begin
+                        cpu_chr_rom_addr <= v[12:0];
                     end
-                    t <= t + (increment ? 32 : 1);
+                    v <= v + (increment ? 32 : 1);
                 end
                 default: begin
-                    // Move out after testing
                     if(cpu_we && cpu_addr != 2)
                         regs[cpu_addr] <= cpu_data_in;
                 end
             endcase;
        
-            //scroll_y <= 5'b0;
-            //scroll_x <= test_counter[26:22];
             if (vblank && ~vblank_prev) begin
                 regs[2][7] <= 1'b1;
             end
@@ -328,7 +317,7 @@ always_ff @(posedge clk) begin
                 regs[2][7] <= 1'b0;
             end
             
-            // Hardcoded Sprite 0 Collision for Super Mario Bros
+            // Sprite 0 Collision Status Flip
             if(sprite_collision && ~sprite_col_prev)
                 regs[2][6] <= 1'b1;
             else if(~sprite_collision)
@@ -404,11 +393,16 @@ end
 logic [9:0] attr_x = scroll_x + delayedX[9:3];
 logic [9:0] attr_y = scroll_y + delayedY[9:3];
 
+// Sprite 0 Detection
+logic sprite_0_in_scanline;
+logic sprite_0_overlap;
+logic sprite_0_done;
+
 // Sprite Vertical Flip
 always_comb begin
     cur_sprite_y_offset = drawY - visible_sprites[cur_sprite_load].y;
     if(visible_sprites[cur_sprite_load].attr[7])
-        cur_sprite_y_offset = drawY - (7 - visible_sprites[cur_sprite_load].y);
+        cur_sprite_y_offset = 7 - (drawY - visible_sprites[cur_sprite_load].y);
 end
 
 // Background tiles
@@ -420,12 +414,21 @@ always_ff @(posedge clk_25MHz) begin
         sprite_name_table_byte <= 8'b0;
         
     end else begin
-
-        if(drawX == 100 && drawY == 30) begin
-            sprite_collision <= 1'b1;
+        // Sprite 0 Collision
+        if(sprite_0_in_scanline) begin
+            // Currently drawing on screen + collision + first time this frame
+            if(drawX >= 0 && drawX < 256 && sprite_0_overlap && ~sprite_0_done) begin
+                sprite_collision <= 1'b1;
+                sprite_0_done <= 1;
+            end
         end
-        if(drawY == 524)
+
+        // Turn off Sprite 0 Hit during VBlank
+        // Exact number doesn't seem to matter
+        if(drawY == 524) begin
             sprite_collision <= 1'b0;
+            sprite_0_done <= 0;
+        end
 
         // Sprite Logic
         nmi_out <= 1'b1;
@@ -437,8 +440,10 @@ always_ff @(posedge clk_25MHz) begin
         end
 
         // Reset sprite count
-        if(drawX == 255)
+        if(drawX == 255) begin
             sprite_count <= 0;
+            sprite_0_in_scanline <= 0;
+        end
 
         // Get first 8 visible sprites on scanline
         if(drawX >= 256 && drawX < 320) begin
@@ -448,6 +453,11 @@ always_ff @(posedge clk_25MHz) begin
                 visible_sprites[sprite_count].attr <= OAM_regs[(drawX - 256) * 4 + 2];
                 visible_sprites[sprite_count].x    <= OAM_regs[(drawX - 256) * 4 + 3];
                 sprite_count <= sprite_count + 1;
+
+                // Implies Sprite 0 is on the current line
+                if(drawX == 256) begin
+                    sprite_0_in_scanline <= 1;
+                end
             end
         end
         
@@ -518,20 +528,35 @@ logic [5:0] sprite_palette_addr;
 always_comb begin
     found_sprite = 1'b0;
     sprite_palette_addr = 6'b0;
+    sprite_0_overlap = 0;
+    // Check the 8 sprites if they need to be rendered.
     for(int i = 0; i < sprite_count; i++) begin
         if(found_sprite == 1'b0) begin
             if(visible_sprites[i].x <= drawX && visible_sprites[i].x + 8 > drawX) begin
                 found_sprite = 1'b1;
+
                 sprite_offset = 7 - (drawX - visible_sprites[i].x);
+                // Horizontal flip
                 if(visible_sprites[i].attr[6])
                     sprite_offset = drawX - visible_sprites[i].x;
+                
+                // Fetch palette ram
                 sprite_palette_addr = palette_ram[{1'b1, visible_sprites[i].attr[1:0], 
                     visible_sprites[i].msb[sprite_offset], 
                     visible_sprites[i].lsb[sprite_offset]}];
+
+                // Background has priority or sprite is transparent
                 if({visible_sprites[i].msb[sprite_offset], visible_sprites[i].lsb[sprite_offset]} == 2'd0 ||
                     (pixel_bits != 2'b0 && visible_sprites[i].attr[5]))
                     found_sprite = 1'b0;
 
+                // Detect Sprite 0 Hit
+                if(i == 0 && sprite_0_in_scanline &&
+                    {visible_sprites[i].msb[sprite_offset], visible_sprites[i].lsb[sprite_offset]} != 2'd0 &&
+                    pixel_bits != 2'd0
+                ) begin
+                    sprite_0_overlap = 1;
+                end
             end
         end
     end

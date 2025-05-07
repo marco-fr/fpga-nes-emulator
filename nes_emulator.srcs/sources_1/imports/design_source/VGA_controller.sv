@@ -108,7 +108,7 @@ module  vga_controller ( input        pixel_clk,        // 50 MHz clock
             display = 1'b0;
         else 
             display = 1'b1;
-        if(vc >= 10'd241)
+        if(vc >= 10'd241 && vc <= 10'd262)
             vblank = 1'b1;
         else
             vblank = 1'b0;

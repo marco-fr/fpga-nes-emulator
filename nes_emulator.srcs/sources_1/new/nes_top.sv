@@ -1,24 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 04/24/2025 01:10:49 AM
-// Design Name: 
-// Module Name: nes_top
-// Project Name:9
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-
 
 module nes_top(
     input logic Clk,
@@ -205,8 +185,6 @@ module nes_top(
         .*
     );
     
-    
-    
     always_ff @(posedge clk_1_66mhz) begin
         controller_byte <= 8'b0;
         for(int i = 0; i < 4; i++) begin
@@ -252,6 +230,7 @@ module nes_top(
         prg_rom_addr = 15'b0;
         oamdma_begin = 9'b0;
         oam_cpu_start_addr = 8'b0;
+
         // CPU RAM
         if (AB < 16'h2000)  begin
             cpu_ram_we = WE;
@@ -259,6 +238,7 @@ module nes_top(
             DI = cpu_ram_data;
             cpu_ram_dina = DO;
         end
+
         // PPU IO
         else if(AB < 16'h4000) begin
             cpu_we = WE;
@@ -266,6 +246,7 @@ module nes_top(
             cpu_data_in = DO;
             DI = cpu_data_out;
         end
+
         // OAMDMA
         else if(AB == 16'h4014) begin
             if(WE) begin
@@ -273,6 +254,8 @@ module nes_top(
                 oamdma_begin = 9'b1;
             end
         end
+
+        // Controller 1
         else if(AB == 16'h4016) begin
             if(~WE) begin
                 DI = {7'b0, cpu_controller_byte[0]};
@@ -283,9 +266,11 @@ module nes_top(
             //DI = 8'h00;
         //else if(AB == 16'hFFFD)
             //DI = 8'h80;
+
         // PRG-ROM
         else if (AB >= 16'h8000) begin
             // Change to 13 if 16 KB PRG
+            // ROM script should mirror if it is shorter
             prg_rom_addr = AB[14:0];
             DI = prg_rom_data;
         end
@@ -295,8 +280,9 @@ module nes_top(
     logic [12:0] cpu_ram_addr;
     logic [7:0] cpu_ram_data;
     logic [7:0] cpu_ram_dina;
-    //logic [7:0] cpu_ram_doutb;
     logic cpu_ram_we;
+
+    // All BRAM Instantiations
     
     CPU_RAM cpu_ram(
         .addra(cpu_ram_addr),
