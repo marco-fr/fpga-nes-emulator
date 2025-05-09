@@ -117,22 +117,18 @@ module nes_top(
     assign WE = ~WE_inv;
     
     T65 c(
-        .mode   (2'b0),		// 6502 mode
+        .mode   (2'b0),
         .BCD_en (1'b0),
-        
-        .clk    (clk_1_66mhz),		// clock
-    
-        .res_n  (~reset),		// cpu reset 
-        .enable (1'b1),	// enable (cpu doesnt continue unless this is high)
-        .rdy    (RDY),		// ready (cpu doesnt continue with some extra steps)
-    
+        .clk    (clk_1_66mhz),
+        .res_n  (~reset),
+        .enable (1'b1),	
+        .rdy    (RDY),
         .IRQ_n  (IRQ),
         .NMI_n  (NMI),
-        
-        .R_W_n  (WE_inv),	// read = 1, write = 0
-        .A      (AB),	// address in DRAM
-        .DI     (DI),	// data in
-        .DO     (DO)	// data out
+        .R_W_n  (WE_inv),
+        .A      (AB),
+        .DI     (DI),
+        .DO     (DO)	
     );
     
     // PRG-ROM BRAM Configuration

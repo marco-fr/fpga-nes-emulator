@@ -146,6 +146,21 @@ logic [7:0] palette_ram [0:31];
 logic sprite_collision;
 logic [8:0] col_x, col_y;
 
+logic [9:0] scaled_drawX;
+logic [9:0] scaled_drawY;
+
+//logic [9:0] drawX_shift;
+logic [9:0] drawY_shift;
+
+always_comb begin
+    scaled_drawX = {1'b0, drawX[9:1]};
+    drawY_shift = drawY + 1;
+        //scaled_drawX = {1'b0, drawX_shift[9:1]};
+    scaled_drawY = {1'b0, drawY[9:1]};
+    if(scaled_drawX + fine_x + 8 >= 400)
+        scaled_drawY = {1'b0, drawY_shift[9:1]};
+end
+
 always_comb begin
     cpu_data_out = regs[cpu_addr];
     if(cpu_addr == 3'd7) begin
@@ -157,7 +172,6 @@ always_comb begin
         
     scroll_x = t[4:0];
     scroll_y = t[9:5];
-    //fine_x = total_scroll_x[2:0];
     fine_y = t[14:12];
     name_addr = t[11:10];
 end
@@ -329,13 +343,13 @@ end
 
 // Rendering
 logic [2:0] cycle_offset;
-assign cycle_offset = delayedX % 8;
+assign cycle_offset = (delayedX) % 8;
 
 logic [2:0] total_cycle_offset;
-assign total_cycle_offset = cycle_offset;
+assign total_cycle_offset = (delayedX) % 8;
 
 logic [2:0] bit_index;
-assign bit_index = 7 - total_cycle_offset;
+assign bit_index = 7 - cycle_offset;
 logic pixel_low;
 assign pixel_low = tile_shift_low[bit_index];
 logic pixel_high;
@@ -367,7 +381,7 @@ logic [7:0] sprite_y;
 // Get first 8 visible sprites for current scanline
 logic [3:0] sprite_count;
 
-assign sprite_y = OAM_regs[(drawX - 256) * 4 + 0];
+assign sprite_y = OAM_regs[(drawX - 512) * 4 + 0];
 
 // Load Sprite CHR-ROM bytes during blanking period
 logic [8:0] sprite_load_counter;
@@ -379,14 +393,18 @@ assign cur_sprite_load = sprite_load_counter[5:3];
 
 // Compensate for rendering delay
 logic [9:0] delayedX, delayedY;
+logic [9:0] tmpX, tmpY;
 always_comb begin
-    delayedX = ((drawX + 8) + fine_x) % 800;
+    //tmpX = ((drawX + 16) + fine_x * 2) % 800;
+    //delayedX = {1'b0, tmpX[9:1]};
+    delayedX = (scaled_drawX + fine_x + 8) % 400;
 
     // May not work
-    delayedY = drawY + fine_y;
-    if(drawX + fine_y + 8 >= 640) begin
-        delayedY = (drawY + 1) % 480;
-    end
+
+    delayedY = scaled_drawY + fine_y;
+    //if(scaled_drawX + fine_x + 8 > 255) begin
+        //delayedY = (scaled_drawY + fine_y + 1) % 262;
+    //end
 end
 
 // Compensate for scrolling in attribute table
@@ -400,9 +418,9 @@ logic sprite_0_done;
 
 // Sprite Vertical Flip
 always_comb begin
-    cur_sprite_y_offset = drawY - visible_sprites[cur_sprite_load].y;
+    cur_sprite_y_offset = scaled_drawY - visible_sprites[cur_sprite_load].y;
     if(visible_sprites[cur_sprite_load].attr[7])
-        cur_sprite_y_offset = 7 - (drawY - visible_sprites[cur_sprite_load].y);
+        cur_sprite_y_offset = 7 - (scaled_drawY - visible_sprites[cur_sprite_load].y);
 end
 
 // Background tiles
@@ -415,17 +433,23 @@ always_ff @(posedge clk_25MHz) begin
         
     end else begin
         // Sprite 0 Collision
-        if(sprite_0_in_scanline) begin
-            // Currently drawing on screen + collision + first time this frame
-            if(drawX >= 0 && drawX < 256 && sprite_0_overlap && ~sprite_0_done) begin
-                sprite_collision <= 1'b1;
-                sprite_0_done <= 1;
-            end
+        //if(sprite_0_in_scanline) begin
+            //// Currently drawing on screen + collision + first time this frame
+            //if(scaled_drawX >= 0 && scaled_drawX < 256 && sprite_0_overlap && ~sprite_0_done && drawY[0]) begin
+                //sprite_collision <= 1'b1;
+                //sprite_0_done <= 1;
+            //end
+        //end
+
+        // Hardcoded Sprite 0 for SMB
+        // Collision breaks with scaled video for some reason
+        if(scaled_drawX == 200 && scaled_drawY == 30 && drawY[0]) begin
+            sprite_collision <= 1'b1;
         end
 
         // Turn off Sprite 0 Hit during VBlank
         // Exact number doesn't seem to matter
-        if(drawY == 524) begin
+        if(drawY == 520) begin
             sprite_collision <= 1'b0;
             sprite_0_done <= 0;
         end
@@ -440,29 +464,29 @@ always_ff @(posedge clk_25MHz) begin
         end
 
         // Reset sprite count
-        if(drawX == 255) begin
+        if(drawX == 511) begin
             sprite_count <= 0;
             sprite_0_in_scanline <= 0;
         end
 
         // Get first 8 visible sprites on scanline
-        if(drawX >= 256 && drawX < 320) begin
-            if (drawY >= sprite_y && drawY < sprite_y + 8 && sprite_count < 8) begin
+        if(drawX >= 512 && drawX < 576) begin
+            if (scaled_drawY >= sprite_y && scaled_drawY < sprite_y + 8 && sprite_count < 8) begin
                 visible_sprites[sprite_count].y    <= sprite_y;
-                visible_sprites[sprite_count].tile <= OAM_regs[(drawX - 256) * 4 + 1];
-                visible_sprites[sprite_count].attr <= OAM_regs[(drawX - 256) * 4 + 2];
-                visible_sprites[sprite_count].x    <= OAM_regs[(drawX - 256) * 4 + 3];
+                visible_sprites[sprite_count].tile <= OAM_regs[(drawX - 512) * 4 + 1];
+                visible_sprites[sprite_count].attr <= OAM_regs[(drawX - 512) * 4 + 2];
+                visible_sprites[sprite_count].x    <= OAM_regs[(drawX - 512) * 4 + 3];
                 sprite_count <= sprite_count + 1;
 
                 // Implies Sprite 0 is on the current line
-                if(drawX == 256) begin
+                if(drawX == 512) begin
                     sprite_0_in_scanline <= 1;
                 end
             end
         end
         
         // Load CHR-ROM for each sprite
-        if(drawX >= 400 && drawX < 464) begin
+        if(drawX >= 600 && drawX < 664) begin
             case(sprite_load_counter[2:0])
                 3'd2: begin                
                     sprite_name_table_byte <= visible_sprites[cur_sprite_load].tile;
@@ -482,39 +506,39 @@ always_ff @(posedge clk_25MHz) begin
             sprite_load_counter <= 9'b0;
 
             // Background rendering
-            case(total_cycle_offset)
-                3'b0: begin // Load shift register 
-                        vram_addr <= (delayedX[9:3] + 32 * delayedY[9:3] + name_addr * 11'h400 + scroll_x + 32 * scroll_y) % 2048;
-                        if(delayedX[9:3] + scroll_x >= 32)
-                            vram_addr <= ((delayedX[9:3] + scroll_x) % 32 + 32 * delayedY[9:3] + (name_addr + 1) * 11'h400 + 32 * scroll_y) % 2048;
-                end
-                3'd2: begin                
-                    name_table_byte <= vram_data;
-                    chr_rom_addr <= {regs[0][4], vram_data, 1'b0, delayedY[2:0]};
-                    vram_addr <= 11'h3C0 + vram_addr[11:10] * 11'h400 + {vram_addr[9:7], vram_addr[4:2]};
-                end
-                3'd4: begin
-                    attribute_table_byte <= vram_data;
-                end
-                3'd5: begin
+            if(drawX[0]) begin
+                case(total_cycle_offset)
+                    3'b0: begin // Load shift register 
+                            vram_addr <= (delayedX[9:3] + 32 * delayedY[9:3] + name_addr * 11'h400 + scroll_x + 32 * scroll_y) % 2048;
+                            if(delayedX[9:3] + scroll_x >= 32)
+                                vram_addr <= ((delayedX[9:3] + scroll_x) % 32 + 32 * delayedY[9:3] + (name_addr + 1) * 11'h400 + 32 * scroll_y) % 2048;
+                    end
+                    3'd2: begin                
+                        name_table_byte <= vram_data;
+                        chr_rom_addr <= {regs[0][4], vram_data, 1'b0, delayedY[2:0]};
+                        vram_addr <= 11'h3C0 + vram_addr[11:10] * 11'h400 + {vram_addr[9:7], vram_addr[4:2]};
+                    end
+                    3'd4: begin
+                        attribute_table_byte <= vram_data;
+                    end
+                    3'd5: begin
                         tile_lsb <= chr_rom_data;
                         chr_rom_addr <= {regs[0][4], name_table_byte, 1'b1, delayedY[2:0]};
-                end 
-                3'd6: begin
-                    case ({attr_y[1], attr_x[1]})
-                        2'b00: tile_attribute_bits <= attribute_table_byte[1:0]; // top-left
-                        2'b01: tile_attribute_bits <= attribute_table_byte[3:2]; // top-right
-                        2'b10: tile_attribute_bits <= attribute_table_byte[5:4]; // bottom-left
-                        2'b11: tile_attribute_bits <= attribute_table_byte[7:6]; // bottom-right
-                    endcase
-                end
-                3'd7: begin
-                    tile_msb <= chr_rom_data;
-                    tile_shift_low <= tile_lsb;
-                    tile_shift_high <= chr_rom_data;
-                end
-                default;
-            endcase
+                    end 
+                    3'd7: begin
+                        case ({attr_y[1], attr_x[1]})
+                            2'b00: tile_attribute_bits <= attribute_table_byte[1:0]; // top-left
+                            2'b01: tile_attribute_bits <= attribute_table_byte[3:2]; // top-right
+                            2'b10: tile_attribute_bits <= attribute_table_byte[5:4]; // bottom-left
+                            2'b11: tile_attribute_bits <= attribute_table_byte[7:6]; // bottom-right
+                        endcase
+                        tile_msb <= chr_rom_data;
+                        tile_shift_low <= tile_lsb;
+                        tile_shift_high <= chr_rom_data;
+                    end
+                    default;
+                endcase
+            end
         end
 
     end
@@ -532,13 +556,13 @@ always_comb begin
     // Check the 8 sprites if they need to be rendered.
     for(int i = 0; i < sprite_count; i++) begin
         if(found_sprite == 1'b0) begin
-            if(visible_sprites[i].x <= drawX && visible_sprites[i].x + 8 > drawX) begin
+            if(visible_sprites[i].x <= scaled_drawX && visible_sprites[i].x + 8 > scaled_drawX) begin
                 found_sprite = 1'b1;
 
-                sprite_offset = 7 - (drawX - visible_sprites[i].x);
+                sprite_offset = 7 - (scaled_drawX - visible_sprites[i].x);
                 // Horizontal flip
                 if(visible_sprites[i].attr[6])
-                    sprite_offset = drawX - visible_sprites[i].x;
+                    sprite_offset = scaled_drawX - visible_sprites[i].x;
                 
                 // Fetch palette ram
                 sprite_palette_addr = palette_ram[{1'b1, visible_sprites[i].attr[1:0], 
@@ -562,7 +586,7 @@ always_comb begin
     end
 
     // 256 x 240 Resolution
-    if(drawX <= 255 && drawY < 240) begin
+    if(scaled_drawX <= 255 && scaled_drawY < 240) begin
         pixel_color = get_palette_color(palette_addr);
         if(found_sprite == 1'b1)
             pixel_color = get_palette_color(sprite_palette_addr);
