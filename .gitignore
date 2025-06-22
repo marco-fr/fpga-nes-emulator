@@ -1,0 +1,26 @@
+# Vivado-generated files
+*.xsa
+*.jou
+*.log
+*.str
+*.tcl.backup
+*.tmp
+*.xml
+*.html
+*.wcfg
+
+# Project metadata and build outputs
+nes_emulator.cache/
+nes_emulator.hw/
+nes_emulator.ip_user_files/
+nes_emulator.sim/
+nes_emulator.runs/
+nes_emulator.gen/
+nes_emulator.Xil/
+
+# Simulation/FPGA tool artifacts
+*.wdb
+*.pb
+*.bit
+*.bin
+*.elf
